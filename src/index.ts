@@ -65,10 +65,16 @@ app.use(cors({
     const normalizedOrigin = origin.replace(/\/$/, '')
     const normalizedFrontendUrl = frontendUrl.replace(/\/$/, '')
     
-    // Allow exact match or localhost for development
-    if (normalizedOrigin === normalizedFrontendUrl || normalizedOrigin.includes('localhost')) {
+    // Allow exact match, localhost for development, or vercel.app domains
+    if (
+      normalizedOrigin === normalizedFrontendUrl || 
+      normalizedOrigin.includes('localhost') ||
+      normalizedOrigin.includes('vercel.app') ||
+      normalizedOrigin.includes('127.0.0.1')
+    ) {
       callback(null, true)
     } else {
+      logWarn('CORS blocked request', { origin, frontendUrl })
       callback(new Error('Not allowed by CORS'))
     }
   },
