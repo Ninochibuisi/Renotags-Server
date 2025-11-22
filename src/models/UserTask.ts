@@ -3,10 +3,15 @@ import mongoose, { Schema, Document, Types } from 'mongoose'
 export interface IUserTask extends Document {
   userId: Types.ObjectId
   taskId: Types.ObjectId
-  status: 'pending' | 'completed'
+  status: 'pending' | 'submitted' | 'approved' | 'rejected' | 'completed'
   completedAt?: Date
   verifiedAt?: Date
+  submittedAt?: Date
+  reviewedAt?: Date
+  reviewedBy?: Types.ObjectId
+  submissionLink?: string
   verificationData?: any
+  rejectionReason?: string
   pointsAwarded: boolean
   createdAt: Date
   updatedAt: Date
@@ -28,7 +33,7 @@ const UserTaskSchema = new Schema<IUserTask>(
     },
     status: {
       type: String,
-      enum: ['pending', 'completed'],
+      enum: ['pending', 'submitted', 'approved', 'rejected', 'completed'],
       default: 'pending',
       index: true
     },
@@ -40,9 +45,32 @@ const UserTaskSchema = new Schema<IUserTask>(
       type: Date,
       default: null
     },
+    submittedAt: {
+      type: Date,
+      default: null
+    },
+    reviewedAt: {
+      type: Date,
+      default: null
+    },
+    reviewedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'AdminUser',
+      default: null
+    },
+    submissionLink: {
+      type: String,
+      trim: true,
+      default: null
+    },
     verificationData: {
       type: Schema.Types.Mixed,
       default: {}
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: null
     },
     pointsAwarded: {
       type: Boolean,

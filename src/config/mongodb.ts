@@ -21,7 +21,18 @@ export const connectMongoDB = async (): Promise<void> => {
       retryReads: true,
     })
 
-    logInfo('✅ Connected to MongoDB Atlas')
+    // Verify connection by pinging the database
+    if (!mongoose.connection.db) {
+      throw new Error('MongoDB connection established but database object is undefined')
+    }
+    
+    await mongoose.connection.db.admin().ping()
+    
+    logInfo('✅ Connected to MongoDB Atlas', {
+      database: mongoose.connection.db.databaseName,
+      host: mongoose.connection.host,
+      readyState: mongoose.connection.readyState,
+    })
   } catch (error) {
     logError('❌ MongoDB connection error', error)
     throw error

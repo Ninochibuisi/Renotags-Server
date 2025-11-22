@@ -19,27 +19,67 @@ export const authenticate = (
   next: NextFunction
 ) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1]
-
-    if (!token) {
+    const authHeader = req.headers.authorization
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
         message: 'Authentication required',
       })
     }
 
+    const token = authHeader.split(' ')[1]
+
+    if (!token || token.length < 10) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token format',
+      })
+    }
+
     const jwtSecret = getJwtSecret()
+    
+    if (!jwtSecret || jwtSecret.length < 32) {
+      logError('JWT secret is not properly configured', { secretLength: jwtSecret?.length })
+      return res.status(500).json({
+        success: false,
+        message: 'Server configuration error',
+      })
+    }
+
     const decoded = jwt.verify(
       token,
       jwtSecret
     ) as { id: number | string; email: string; role: string }
 
+    // Validate decoded token has required fields
+    if (!decoded.id || !decoded.email || !decoded.role) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token payload',
+      })
+    }
+
     req.user = decoded
     next()
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Token expired',
+      })
+    }
+    if (error.name === 'JsonWebTokenError') {
+      logWarn('Invalid JWT token attempt', { error: error.message })
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token',
+      })
+    }
+    logError('Authentication error', error)
     return res.status(401).json({
       success: false,
-      message: 'Invalid or expired token',
+      message: 'Authentication failed',
     })
   }
 }
@@ -90,6 +130,11 @@ export const requireAdmin = async (
 
 export const requirePermission = (resource: string, action: string) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    // Super admin has all permissions - bypass check
+    if (req.user?.role === 'super_admin') {
+      return next()
+    }
+
     if (!req.user || !req.user.permissions) {
       return res.status(403).json({
         success: false,

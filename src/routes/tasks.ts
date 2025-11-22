@@ -1,7 +1,7 @@
 import express from 'express'
 import mongoose from 'mongoose'
 import { authenticate, requireAdmin, requirePermission, AuthRequest } from '../middleware/auth.js'
-import { Task } from '../models/Task.js'
+import { Task, ITask } from '../models/Task.js'
 import { UserTask } from '../models/UserTask.js'
 import { logInfo, logWarn, logError } from '../utils/logger.js'
 import { z } from 'zod'
@@ -208,6 +208,152 @@ router.get('/user/:userId/completions', requirePermission('tasks', 'read'), asyn
   }
 })
 
+// User routes - get available tasks (accessible to all authenticated users regardless of status)
+router.get('/user/available', authenticate, async (req: AuthRequest, res, next) => {
+  try {
+    const userEmail = req.user?.email
+    if (!userEmail) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      })
+    }
+
+    // Verify user exists (but don't restrict by status - all users can see tasks)
+    const user = await User.findOne({ email: userEmail })
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      })
+    }
+
+    // Get all active tasks - visible to all authenticated users (new and old)
+    const tasks = await Task.find({ isActive: true }).sort({ createdAt: -1 })
+    
+    // Get user's task completions
+    const userTasks = await UserTask.find({ userId: user._id })
+    
+    // Map tasks with user completion status
+    const tasksWithStatus = tasks.map((task: ITask) => {
+      const userTask = userTasks.find(ut => ut.taskId.toString() === (task._id as mongoose.Types.ObjectId).toString())
+      return {
+        _id: task._id,
+        title: task.title,
+        description: task.description,
+        taskType: task.taskType,
+        actionUrl: task.actionUrl,
+        pointsReward: task.pointsReward,
+        requiresVerification: task.requiresVerification,
+        verificationMethod: task.verificationMethod,
+        status: userTask?.status || 'pending',
+        submissionLink: userTask?.submissionLink,
+        submittedAt: userTask?.submittedAt,
+        reviewedAt: userTask?.reviewedAt,
+        rejectionReason: userTask?.rejectionReason,
+        pointsAwarded: userTask?.pointsAwarded || false,
+      }
+    })
+
+    res.json({
+      success: true,
+      data: {
+        tasks: tasksWithStatus,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// Submit task completion with link (for review)
+router.post('/:taskId/submit', authenticate, async (req: AuthRequest, res, next) => {
+  try {
+    const { taskId } = req.params
+    const { submissionLink } = req.body
+    const userEmail = req.user?.email
+
+    if (!userEmail) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      })
+    }
+
+    if (!submissionLink) {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission link is required',
+      })
+    }
+
+    // Validate URL
+    try {
+      new URL(submissionLink)
+    } catch {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid URL format',
+      })
+    }
+
+    const user = await User.findOne({ email: userEmail })
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      })
+    }
+
+    const task = await Task.findOne({ _id: taskId, isActive: true })
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found or inactive',
+      })
+    }
+
+    let userTask = await UserTask.findOne({ userId: user._id, taskId: task._id })
+
+    if (userTask && ['approved', 'completed'].includes(userTask.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Task already completed',
+      })
+    }
+
+    if (userTask) {
+      userTask.status = 'submitted'
+      userTask.submissionLink = submissionLink
+      userTask.submittedAt = new Date()
+      await userTask.save()
+    } else {
+      userTask = await UserTask.create({
+        userId: user._id,
+        taskId: task._id,
+        status: 'submitted',
+        submissionLink,
+        submittedAt: new Date(),
+      })
+    }
+
+    logInfo('Task submission received', { 
+      taskId, 
+      userId: (user._id as mongoose.Types.ObjectId).toString(),
+      submissionLink 
+    })
+
+    res.json({
+      success: true,
+      message: 'Task submitted for review',
+      data: userTask,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// Complete task (for tasks that don't require review)
 router.post('/:taskId/complete', authenticate, async (req: AuthRequest, res, next) => {
   try {
     const { taskId } = req.params
@@ -229,7 +375,6 @@ router.post('/:taskId/complete', authenticate, async (req: AuthRequest, res, nex
     }
 
     const task = await Task.findOne({ _id: taskId, isActive: true })
-
     if (!task) {
       return res.status(404).json({
         success: false,
@@ -237,9 +382,17 @@ router.post('/:taskId/complete', authenticate, async (req: AuthRequest, res, nex
       })
     }
 
+    // If task requires verification, it must be submitted first
+    if (task.requiresVerification) {
+      return res.status(400).json({
+        success: false,
+        message: 'This task requires submission for review. Please use the submit endpoint.',
+      })
+    }
+
     let userTask = await UserTask.findOne({ userId: user._id, taskId: task._id })
 
-    if (userTask && userTask.status === 'completed') {
+    if (userTask && ['completed', 'approved'].includes(userTask.status)) {
       return res.status(400).json({
         success: false,
         message: 'Task already completed',
@@ -280,6 +433,129 @@ router.post('/:taskId/complete', authenticate, async (req: AuthRequest, res, nex
     res.json({
       success: true,
       message: 'Task completed successfully',
+      data: userTask,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// Admin routes for reviewing submissions
+router.get('/submissions/pending', requireAdmin, requirePermission('tasks', 'read'), async (req: AuthRequest, res, next) => {
+  try {
+    const submissions = await UserTask.find({ status: 'submitted' })
+      .populate('userId', 'email name')
+      .populate('taskId', 'title description taskType pointsReward')
+      .sort({ submittedAt: -1 })
+      .lean()
+
+    res.json({
+      success: true,
+      data: {
+        submissions,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/submissions/:submissionId/approve', requireAdmin, requirePermission('tasks', 'write'), async (req: AuthRequest, res, next) => {
+  try {
+    const { submissionId } = req.params
+    const userTask = await UserTask.findById(submissionId).populate('taskId')
+
+    if (!userTask) {
+      return res.status(404).json({
+        success: false,
+        message: 'Submission not found',
+      })
+    }
+
+    if (userTask.status !== 'submitted') {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission is not in submitted status',
+      })
+    }
+
+    userTask.status = 'approved'
+    userTask.reviewedAt = new Date()
+    if (req.user?.id) {
+      userTask.reviewedBy = new mongoose.Types.ObjectId(String(req.user.id))
+    }
+    userTask.completedAt = new Date()
+    await userTask.save()
+
+    const task = userTask.taskId as any
+    if (task.pointsReward > 0) {
+      const pointsResult = await awardPoints(
+        (userTask.userId as mongoose.Types.ObjectId).toString(),
+        task.pointsReward,
+        `Task approved: ${task.title}`,
+        { taskId: task._id.toString(), taskType: task.taskType }
+      )
+
+      if (pointsResult.success) {
+        userTask.pointsAwarded = true
+        await userTask.save()
+      }
+    }
+
+    logInfo('Task submission approved', { 
+      submissionId, 
+      approvedBy: req.user?.email 
+    })
+
+    res.json({
+      success: true,
+      message: 'Submission approved successfully',
+      data: userTask,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/submissions/:submissionId/reject', requireAdmin, requirePermission('tasks', 'write'), async (req: AuthRequest, res, next) => {
+  try {
+    const { submissionId } = req.params
+    const { rejectionReason } = req.body
+
+    const userTask = await UserTask.findById(submissionId)
+
+    if (!userTask) {
+      return res.status(404).json({
+        success: false,
+        message: 'Submission not found',
+      })
+    }
+
+    if (userTask.status !== 'submitted') {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission is not in submitted status',
+      })
+    }
+
+    userTask.status = 'rejected'
+    userTask.reviewedAt = new Date()
+    if (req.user?.id) {
+      userTask.reviewedBy = new mongoose.Types.ObjectId(String(req.user.id))
+    }
+    userTask.rejectionReason = rejectionReason || 'Submission does not meet requirements'
+    await userTask.save()
+
+    logInfo('Task submission rejected', { 
+      submissionId, 
+      rejectedBy: req.user?.email,
+      reason: rejectionReason 
+    })
+
+    res.json({
+      success: true,
+      message: 'Submission rejected',
+      data: userTask,
     })
   } catch (error) {
     next(error)

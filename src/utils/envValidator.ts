@@ -15,7 +15,23 @@ const envSchema = z.object({
   EMAIL_PORT: z.string().default('587'),
   EMAIL_USER: z.string().optional(),
   EMAIL_PASS: z.string().optional(),
-  EMAIL_FROM: z.string().email().optional(),
+  EMAIL_FROM: z.preprocess(
+    (val) => {
+      if (!val || typeof val !== 'string') return undefined
+      const trimmed = val.trim()
+      if (trimmed === '') return undefined
+      
+      // Validate email format - if invalid, return undefined and log warning
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(trimmed)) {
+        logWarn(`EMAIL_FROM has invalid email format: "${trimmed}". Email service will use EMAIL_USER as fallback.`)
+        return undefined
+      }
+      
+      return trimmed
+    },
+    z.string().email().optional()
+  ),
 
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
 })
@@ -41,15 +57,5 @@ export const validateEnv = (): EnvConfig => {
       )
     }
     throw error
-  }
-}
-
-try {
-  validateEnv()
-} catch (error) {
-  if (process.env.NODE_ENV === 'production') {
-    throw error
-  } else {
-    logWarn('Environment validation warning', error)
   }
 }

@@ -52,6 +52,37 @@ router.get('/dashboard/:email', authenticate, checkBanStatus, async (req: AuthRe
       }
     }
 
+    // Get referrer information if user was referred
+    let referrerInfo = null
+    if (user.referredByUserId) {
+      const referrer = await User.findById(user.referredByUserId)
+        .select('email name renopaysTag')
+        .lean()
+      if (referrer) {
+        referrerInfo = {
+          email: referrer.email,
+          name: referrer.name,
+          renopaysTag: referrer.renopaysTag,
+        }
+      }
+    } else if (user.referredBy) {
+      // Fallback: find referrer by renopaysTag for backward compatibility
+      const referrer = await User.findOne({ renopaysTag: user.referredBy })
+        .select('email name renopaysTag _id')
+        .lean()
+      if (referrer) {
+        referrerInfo = {
+          email: referrer.email,
+          name: referrer.name,
+          renopaysTag: referrer.renopaysTag,
+        }
+        // Update user to include referredByUserId for future queries
+        await User.findByIdAndUpdate(user._id, {
+          referredByUserId: referrer._id,
+        })
+      }
+    }
+
     // Get onboarding events
     const events = await OnboardingEvent.find({ userId: user._id })
       .sort({ createdAt: -1 })
@@ -75,6 +106,7 @@ router.get('/dashboard/:email', authenticate, checkBanStatus, async (req: AuthRe
           telegramUsername: user.telegramUsername,
           telegramFollowed: user.telegramFollowed || false,
           referredBy: user.referredBy,
+          referredByUser: referrerInfo, // Full referrer information (email, name, renopaysTag)
           successfulReferrals: user.successfulReferrals || 0,
           banned,
           banReason,
@@ -106,12 +138,23 @@ router.post('/renopays-tag', authenticate, checkBanStatus, async (req: AuthReque
       })
     }
 
-    // Check if tag is already taken
-    const existingTag = await User.findOne({ renopaysTag: tag.toLowerCase() })
-    if (existingTag && (existingTag._id as mongoose.Types.ObjectId).toString() !== (user._id as mongoose.Types.ObjectId).toString()) {
+    // Check if tag is already taken by another user
+    const existingTag = await User.findOne({ 
+      renopaysTag: tag.toLowerCase(),
+      _id: { $ne: user._id }
+    })
+    if (existingTag) {
       return res.status(400).json({
         success: false,
-        message: 'This tag is already taken',
+        message: 'This tag is already taken by another user. Please choose a different tag.',
+      })
+    }
+
+    // Prevent users from using someone else's tag
+    if (user.renopaysTag && user.renopaysTag !== tag.toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot change your renopays tag once it is set.',
       })
     }
 

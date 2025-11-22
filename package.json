@@ -9,7 +9,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
-    "setup:admin": "tsx src/scripts/setupAdmin.ts"
+    "setup:admin": "tsx src/scripts/setupAdmin.ts",
+    "reset:admin": "tsx src/scripts/resetAdminPassword.ts",
+    "check:admin": "tsx src/scripts/checkAdmin.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -34,6 +34,7 @@ router.get('/users', requirePermission('users', 'read'), async (req: AuthRequest
       .skip(skip)
       .limit(limit)
       .select('-emailVerificationToken')
+      .populate('referredByUserId', 'email name renopaysTag')
 
     const total = await User.countDocuments(filter)
 

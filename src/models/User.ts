@@ -10,12 +10,15 @@ export interface IUser extends Document {
   onboardingStep: number
   emailVerified: boolean
   emailVerificationToken?: string
+  passwordResetToken?: string
+  passwordResetExpires?: Date
   renopaysTag?: string
   points: number
   telegramVerified: boolean
   telegramUsername?: string
   telegramId?: string
-  referredBy?: string // renopaysTag of the referrer
+  referredBy?: string // renopaysTag of the referrer (for backward compatibility)
+  referredByUserId?: mongoose.Types.ObjectId // User ID of the referrer (for accurate tracking)
   referralCode?: string // User's own referral code (same as renopaysTag)
   telegramFollowed: boolean // Whether user follows Telegram channel
   successfulReferrals: number // Count of successful referrals
@@ -70,6 +73,14 @@ const UserSchema = new Schema<IUser>(
       type: String,
       select: false
     },
+    passwordResetToken: {
+      type: String,
+      select: false
+    },
+    passwordResetExpires: {
+      type: Date,
+      select: false
+    },
     password: {
       type: String,
       select: false
@@ -102,6 +113,11 @@ const UserSchema = new Schema<IUser>(
       type: String,
       trim: true,
       lowercase: true,
+      index: true
+    },
+    referredByUserId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
       index: true
     },
     referralCode: {

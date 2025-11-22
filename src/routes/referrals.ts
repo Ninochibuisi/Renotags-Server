@@ -154,10 +154,10 @@ router.post('/check-referral-completion', authenticate, checkBanStatus, async (r
 
         // If referral is now complete and points not yet awarded, award points
         if (allComplete && !referral.pointsAwarded) {
-          // Award points to referrer securely (500 points per successful referral)
+          // Award points to referrer securely (150 points per successful referral)
           const referrerPointsResult = await awardPoints(
             (referrer._id as mongoose.Types.ObjectId).toString(),
-            500,
+            150,
             'Successful referral completed',
             { referredEmail: userEmail, referralId: (referral._id as mongoose.Types.ObjectId).toString() }
           )
@@ -169,7 +169,7 @@ router.post('/check-referral-completion', authenticate, checkBanStatus, async (r
             logInfo('Referral points awarded to referrer', {
               referrerEmail: referrer.email,
               referredEmail: userEmail,
-              points: 500,
+              points: 150,
             })
           } else {
             logWarn('Failed to award referral points to referrer', {

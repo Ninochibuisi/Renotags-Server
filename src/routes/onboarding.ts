@@ -24,10 +24,12 @@ router.post('/', strictRateLimiter, honeypotField, checkBotActivity, async (req,
     }
 
     let referredBy: string | undefined
+    let referredByUserId: mongoose.Types.ObjectId | undefined
     if (referralCode) {
       const referrer = await User.findOne({ renopaysTag: referralCode.toLowerCase() })
       if (referrer) {
         referredBy = referrer.renopaysTag
+        referredByUserId = referrer._id as mongoose.Types.ObjectId
       }
     }
 
@@ -40,6 +42,7 @@ router.post('/', strictRateLimiter, honeypotField, checkBotActivity, async (req,
       onboardingStep: 1,
       emailVerified: false,
       referredBy: referredBy,
+      referredByUserId: referredByUserId,
     })
 
     await user.save()
