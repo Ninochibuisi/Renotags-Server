@@ -1,4 +1,5 @@
 import express from 'express'
+import mongoose from 'mongoose'
 import { onboardingSchema } from '../validation/onboardingSchema.js'
 import { User } from '../models/User.js'
 import { Referral } from '../models/Referral.js'

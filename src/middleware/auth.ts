@@ -39,8 +39,14 @@ export const authenticate = (
 
     const jwtSecret = getJwtSecret()
     
-    if (!jwtSecret || jwtSecret.length < 32) {
-      logError('JWT secret is not properly configured', { secretLength: jwtSecret?.length })
+    // Check if JWT secret is properly configured (should be a string from env)
+    // JWT secret type can be string, Buffer, or KeyObject, but we expect a string from env
+    const secretString = typeof jwtSecret === 'string' ? jwtSecret : (jwtSecret instanceof Buffer ? jwtSecret.toString() : String(jwtSecret))
+    if (!jwtSecret || secretString.length < 32) {
+      logError('JWT secret is not properly configured', { 
+        secretType: typeof jwtSecret,
+        secretLength: secretString.length 
+      })
       return res.status(500).json({
         success: false,
         message: 'Server configuration error',
