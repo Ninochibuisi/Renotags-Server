@@ -37,7 +37,6 @@ router.post('/', strictRateLimiter, honeypotField, checkBotActivity, async (req,
     const user = new User({
       email: validatedData.email,
       name: validatedData.name,
-      walletAddress: validatedData.walletAddress || undefined,
       interests: validatedData.interests,
       status: 'pending',
       onboardingStep: 1,

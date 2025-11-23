@@ -13,11 +13,6 @@ export const onboardingSchema = z.object({
     .min(2, 'Name must be at least 2 characters')
     .max(100, 'Name must be less than 100 characters')
     .trim(),
-  walletAddress: z
-    .string()
-    .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format')
-    .optional()
-    .or(z.literal('')),
   interests: z
     .array(z.string())
     .min(1, 'Please select at least one interest')

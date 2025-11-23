@@ -11,6 +11,28 @@ const __dirname = dirname(__filename)
 // Load .env from the server root (two levels up from src/services)
 dotenv.config({ path: join(__dirname, '../../.env') })
 
+/**
+ * Email Service - Provider-Agnostic Implementation
+ * 
+ * This service uses nodemailer with SMTP, but is designed to be easily migratable.
+ * 
+ * To migrate to a different email provider (e.g., SendGrid, AWS SES, Mailgun):
+ * 1. Create a new adapter class implementing the IEmailProvider interface
+ * 2. Update the EmailService class to use the new adapter
+ * 3. Update environment variables accordingly
+ * 
+ * Current implementation supports:
+ * - SMTP (nodemailer)
+ * - Retry logic with exponential backoff
+ * - Connection verification
+ * - Comprehensive error logging
+ * 
+ * Example migration to SendGrid:
+ * - Replace nodemailer with @sendgrid/mail
+ * - Update sendEmail method to use SendGrid API
+ * - Keep the same public interface (sendEmail, sendPasswordSetupEmail, etc.)
+ */
+
 interface EmailOptions {
   to: string
   subject: string
@@ -127,7 +149,7 @@ class EmailService {
     }
   }
 
-  async sendEmail(options: EmailOptions): Promise<boolean> {
+  async sendEmail(options: EmailOptions, retries: number = 3): Promise<boolean> {
     // Wait for initialization to complete if still in progress
     if (this.initializationPromise) {
       await this.initializationPromise
@@ -165,47 +187,82 @@ class EmailService {
       return false
     }
 
-    try {
-      logInfo('Attempting to send email', {
-        to: options.to,
-        subject: options.subject,
-        from: fromEmail,
-        host: process.env.EMAIL_HOST,
-        port: process.env.EMAIL_PORT,
-      })
+    // Retry logic with exponential backoff
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        logInfo('Attempting to send email', {
+          to: options.to,
+          subject: options.subject,
+          from: fromEmail,
+          host: process.env.EMAIL_HOST,
+          port: process.env.EMAIL_PORT,
+          attempt: `${attempt}/${retries}`,
+        })
 
-      const info = await this.transporter.sendMail({
-        from: fromEmail,
-        to: options.to,
-        subject: options.subject,
-        html: options.html,
-        text: options.text || options.html.replace(/<[^>]*>/g, ''),
-      })
-      
-      logInfo('Email sent successfully', {
-        to: options.to,
-        subject: options.subject,
-        messageId: info.messageId,
-        response: info.response,
-        accepted: info.accepted,
-        rejected: info.rejected,
-      })
-      return true
-    } catch (error: any) {
-      logError('Error sending email', {
-        error: error.message,
-        code: error.code,
-        command: error.command,
-        response: error.response,
-        to: options.to,
-        subject: options.subject,
-        host: process.env.EMAIL_HOST,
-        port: process.env.EMAIL_PORT,
-        user: process.env.EMAIL_USER,
-        stack: error.stack,
-      })
-      return false
+        const info = await this.transporter.sendMail({
+          from: fromEmail,
+          to: options.to,
+          subject: options.subject,
+          html: options.html,
+          text: options.text || options.html.replace(/<[^>]*>/g, ''),
+        })
+        
+        logInfo('Email sent successfully', {
+          to: options.to,
+          subject: options.subject,
+          messageId: info.messageId,
+          response: info.response,
+          accepted: info.accepted,
+          rejected: info.rejected,
+          attempt,
+        })
+        return true
+      } catch (error: any) {
+        const isLastAttempt = attempt === retries
+        const shouldRetry = !isLastAttempt && (
+          error.code === 'ECONNRESET' ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ECONNREFUSED' ||
+          error.response?.includes('timeout') ||
+          error.response?.includes('connection')
+        )
+
+        logError(`Error sending email (attempt ${attempt}/${retries})`, {
+          error: error.message,
+          code: error.code,
+          command: error.command,
+          response: error.response,
+          to: options.to,
+          subject: options.subject,
+          host: process.env.EMAIL_HOST,
+          port: process.env.EMAIL_PORT,
+          user: process.env.EMAIL_USER,
+          willRetry: shouldRetry,
+          stack: error.stack,
+        })
+
+        if (shouldRetry) {
+          // Exponential backoff: wait 1s, 2s, 4s...
+          const delay = Math.pow(2, attempt - 1) * 1000
+          logInfo(`Retrying email send after ${delay}ms...`, {
+            to: options.to,
+            attempt: attempt + 1,
+          })
+          await new Promise(resolve => setTimeout(resolve, delay))
+          
+          // Try to reinitialize transporter if connection was lost
+          if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
+            this.initializeTransporter()
+            await this.verifyConnection()
+          }
+        } else {
+          // Last attempt failed or non-retryable error
+          return false
+        }
+      }
     }
+
+    return false
   }
 
   async sendPasswordSetupEmail(email: string, name: string, setupUrl: string): Promise<boolean> {
